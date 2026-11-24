@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Голосовое меню ресторана</title>
+<style>
+  body {
+    font-family: system-ui, sans-serif;
+    text-align: center;
+    padding: 20px;
+    background: #111;
+    color: #fff;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .card {
+    background: #222;
+    border-radius: 16px;
+    padding: 40px 20px;
+    margin: 20px auto;
+    max-width: 500px;
+    border: 4px solid #007bff;
+  }
+  .dish-name { font-size: 36px; font-weight: bold; }
+  .dish-price { font-size: 28px; color: #4dabf7; margin-top: 15px; }
+  .dish-num { font-size: 18px; color: #aaa; margin-bottom: 10px; }
+  .controls { display: flex; justify-content: center; gap: 15px; margin-top: 20px; flex-wrap: wrap; }
+  button {
+    padding: 20px 30px;
+    font-size: 22px;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    background: #333;
+    color: white;
+    min-width: 120px;
+  }
+  button:active { background: #555; }
+  .voice-btn { background: #28a745; }
+  .status { margin-top: 20px; color: #aaa; font-size: 16px; min-height: 24px; }
+  /* Большая зона тапа на весь экран для слепых */
+  .tap-zone {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+  }
+</style>
+</head>
+<body>
+
+<!-- Зона тапа на весь экран: тап в любом месте = следующая позиция -->
+<div class="tap-zone" onclick="nextItem()"></div>
+
+<div class="card">
+  <div class="dish-num" id="dishNum">Позиция 1 из 5</div>
+  <div class="dish-name" id="dishName">Пицца</div>
+  <div class="dish-price" id="dishPrice">500 руб.</div>
+</div>
+
+<div class="controls">
+  <button onclick="prevItem()">◀ Назад</button>
+  <button class="voice-btn" id="voiceBtn" onclick="startVoice()">🎤 Сказать</button>
+  <button onclick="nextItem()">Вперёд ▶</button>
+</div>
+
+<button onclick="readAll()" style="margin-top:15px; background:#007bff;">📢 Перечислить всё меню</button>
+
+<div class="status" id="status">Тапните в любом месте или скажите название блюда</div>
+
+<script>
+  const menuItems = [
+    { name: "Пицца", price: 500 },
+    { name: "Паста", price: 350 },
+    { name: "Салат", price: 200 },
+    { name: "Суп", price: 180 },
+    { name: "Десерт", price: 250 }
+  ];
+
+  let currentIndex = 0;
+  const synth = window.speechSynthesis;
+
+  function speak(text, onEnd) {
+    if (!synth) return;
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'ru-RU';
+    u.rate = 1.0;
+    if (onEnd) u.onend = onEnd;
+    synth.speak(u);
+  }
+
+  function updateDisplay(announce = true) {
+    const item = menuItems[currentIndex];
+    document.getElementById('dishNum').textContent = `Позиция ${currentIndex + 1} из ${menuItems.length}`;
+    document.getElementById('dishName').textContent = item.name;
+    document.getElementById('dishPrice').textContent = item.price + ' руб.';
+    if (announce) {
+      speak(`Позиция ${currentIndex + 1}. ${item.name}. Цена ${item.price} рублей.`);
+    }
+  }
+
+  function nextItem() {
+    currentIndex = (currentIndex + 1) % menuItems.length;
+    updateDisplay(true);
+  }
+
+  function prevItem() {
+    currentIndex = (currentIndex - 1 + menuItems.length) % menuItems.length;
+    updateDisplay(true);
+  }
+
+  // Перечислить всё меню подряд (как аудиогид)
+  function readAll() {
+    synth.cancel();
+    let i = 0;
+    function readNext() {
+      if (i >= menuItems.length) {
+        speak('Конец меню. Скажите название блюда или тапните, чтобы продолжить.');
+        return;
+      }
+      const item = menuItems[i];
+      const u = new SpeechSynthesisUtterance(`Позиция ${i + 1}. ${item.name}. ${item.price} рублей.`);
+      u.lang = 'ru-RU';
+      u.onend = () => { i++; readNext(); };
+      synth.speak(u);
+    }
+    readNext();
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') nextItem();
+    if (e.key === 'ArrowLeft') prevItem();
+  });
+
+  // === Голосовое распознавание ===
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recognition = null;
+  let isListening = false;
+
+  if (SR) {
+    recognition = new SR();
+    recognition.lang = 'ru-RU';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event) => {
+      const t = event.results[0][0].transcript.toLowerCase().trim();
+      document.getElementById('status').textContent = `Вы сказали: "${t}"`;
+
+      // Команды
+      if (t.includes('дальше') || t.includes('следующ') || t.includes('вперёд')) {
+        nextItem(); return;
+      }
+      if (t.includes('назад') || t.includes('предыдущ')) {
+        prevItem(); return;
+      }
+      if (t.includes('всё') || t.includes('все') || t.includes('перечисли') || t.includes('список')) {
+        readAll(); return;
+      }
+
+      // Поиск по названию
+      let found = menuItems.findIndex(item => t.includes(item.name.toLowerCase()));
+
+      // Поиск по номеру
+      if (found === -1) {
+        const num = parseInt(t);
+        if (!isNaN(num) && num >= 1 && num <= menuItems.length) found = num - 1;
+      }
+      // Слова-номера
+      const words = { 'перв': 0, 'втор': 1, 'трет': 2, 'четверт': 3, 'пят': 4 };
+      if (found === -1) {
+        for (const key in words) {
+          if (t.includes(key)) { found = words[key]; break; }
+        }
+      }
+
+      if (found !== -1) {
+        currentIndex = found;
+        updateDisplay(true);
+      } else {
+        speak('Не нашла. Скажите название блюда или номер.');
+      }
+      isListening = false;
+      document.getElementById('voiceBtn').disabled = false;
+    };
+
+    recognition.onerror = () => {
+      document.getElementById('status').textContent = 'Ошибка микрофона. Используйте тап.';
+      isListening = false;
+      document.getElementById('voiceBtn').disabled = false;
+    };
+
+    recognition.onend = () => {
+      isListening = false;
+      document.getElementById('voiceBtn').disabled = false;
+    };
+  } else {
+    document.getElementById('voiceBtn').disabled = true;
+    document.getElementById('status').textContent = 'Голосовой ввод не поддерживается. Тапните экран.';
+  }
+
+  function startVoice() {
+    if (!recognition || isListening) return;
+    speak('Говорите');
+    isListening = true;
+    document.getElementById('voiceBtn').disabled = true;
+    document.getElementById('status').textContent = 'Слушаю...';
+    try { recognition.start(); } catch (e) { console.error(e); isListening = false; document.getElementById('voiceBtn').disabled = false; }
+  }
+
+  // Инициализация
+  updateDisplay(true);
+</script>
+</body>
+</html>
